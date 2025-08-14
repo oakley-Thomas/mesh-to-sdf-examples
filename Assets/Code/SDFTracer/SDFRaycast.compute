@@ -31,13 +31,27 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float dirScale = length(dirSDFTrans);
     float3 dirSDF = dirSDFTrans / dirScale;
 
-    // Starting position of the ray in SDF space
-    float3 pos = mul(_WorldToSDFSpace, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    // Ray origin in SDF space
+    float3 originSDF = mul(_WorldToSDFSpace, float4(0.0, 0.0, 0.0, 1.0)).xyz;
 
-    // Convert maximum distance to SDF space
-    float maxDistance = _MaxDistance * dirScale;
+    // Compute entry/exit of ray with unit SDF volume
+    float3 invDir = 1.0 / dirSDF;
+    float3 t0 = (0.0 - originSDF) * invDir;
+    float3 t1 = (1.0 - originSDF) * invDir;
+    float3 tmin = min(t0, t1);
+    float3 tmax = max(t0, t1);
+    float tEnter = max(max(tmin.x, tmin.y), max(tmin.z, 0.0));
+    float tExit = min(min(tmax.x, tmax.y), tmax.z);
 
-    float t = 0.0;
+    if (tEnter >= tExit)
+    {
+        _Intersections[id.x] = float4(dirWorld * _MaxDistance, 0.0);
+        return;
+    }
+
+    float t = tEnter;
+    float3 pos = originSDF + dirSDF * t;
+    float maxDistance = min(_MaxDistance * dirScale, tExit);
     float hit = 0.0;
 
     for (uint i = 0; i < (uint)_MaxIterations && t < maxDistance; ++i)
@@ -54,9 +68,9 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         pos += dirSDF * distSDF;
     }
 
+    t = min(t, maxDistance);
     float worldT = t / dirScale;
     float3 worldPos = dirWorld * worldT;
 
     _Intersections[id.x] = float4(worldPos, hit);
 }
-
