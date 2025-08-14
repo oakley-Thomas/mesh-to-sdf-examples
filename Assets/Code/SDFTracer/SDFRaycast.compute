@@ -42,14 +42,16 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
     for (uint i = 0; i < (uint)_MaxIterations && t < maxDistance; ++i)
     {
-        float dist = SampleSDF(pos);
-        if (dist < _HitThreshold)
+        float distWorld = SampleSDF(pos);
+        if (distWorld < _HitThreshold)
         {
             hit = 1.0;
             break;
         }
-        t += dist;
-        pos += dirSDF * dist;
+
+        float distSDF = distWorld * dirScale;
+        t += distSDF;
+        pos += dirSDF * distSDF;
     }
 
     float worldT = t / dirScale;
