@@ -28,20 +28,20 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float3 dir = normalize(_Directions[id.x]);
     float t = 0.0;
     float3 pos = float3(0.0, 0.0, 0.0);
-    bool hit = false;
+    float hit = 0.0;
 
     for (uint i = 0; i < (uint)_MaxIterations && t < _MaxDistance; ++i)
     {
         float dist = SampleSDF(pos);
         if (dist < _HitThreshold)
         {
-            hit = true;
+            hit = 1.0;
             break;
         }
         t += dist;
         pos = dir * t;
     }
 
-    _Intersections[id.x] = float4(pos, hit ? 1.0 : 0.0);
+    _Intersections[id.x] = float4(pos, hit);
 }
 

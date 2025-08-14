@@ -42,6 +42,11 @@ public class SDFRaycaster : MonoBehaviour
 
         intersectionData = new Vector4[directions.Length];
         intersectionsBuffer.GetData(intersectionData);
+        foreach (Vector4 v4 in intersectionData)
+        {
+            Debug.Log(v4); 
+        }
+        //Debug.Log(intersectionData);
     }
 
     void OnDestroy()
