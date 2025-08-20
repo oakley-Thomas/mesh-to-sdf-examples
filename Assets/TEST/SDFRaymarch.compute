@@ -1,0 +1,56 @@
+#pragma kernel CSMain
+
+StructuredBuffer<float3> _Directions;
+RWStructuredBuffer<float4> _Intersections;
+
+float4x4 _WorldToSDFSpace;
+float4x4 _SDFToWorldSpace;
+Texture3D<float> _SDF;
+SamplerState sampler_SDF;
+float _Margin;
+int _MaxIterations;
+float _MaxDistance;
+float _HitThreshold;
+
+
+float3 WorldToTexPoint(float3 worldPos)  { return mul(_WorldToSDFSpace, float4(worldPos, 1.0)).xyz; }
+float3 WorldToTexDir  (float3 worldDir)  { return mul(_WorldToSDFSpace, float4(worldDir, 0.0)).xyz; }
+float3 TexToWorldDir (float3 texDir) { return mul(_SDFToWorldSpace, float4(texDir, 0.0)).xyz;}
+float3 TexToWorldPoint(float3 texPos) { return mul(_SDFToWorldSpace, float4(texPos, 1.0)).xyz;}
+
+float SampleSDF(float3 texPos) { return _SDF.SampleLevel(sampler_SDF, texPos, 0).r - _Margin; }
+
+bool RayBoxUnit(float3 rayOrigin, float3 rayDirection, out float tEnter, out float tExit)
+{
+    // Axis-aligned unit cube: [0,1]^3
+    float3 inverseDirection = 1.0 / rayDirection;
+    float3 t0  = (0.0 - rayOrigin) * inverseDirection;
+    float3 t1  = (1.0 - rayOrigin) * inverseDirection;
+    float3 tmin = min(t0, t1);
+    float3 tmax = max(t0, t1);
+    tEnter = max(max(tmin.x, tmin.y), tmin.z);
+    tExit  = min(min(tmax.x, tmax.y), tmax.z);
+    return (tExit >= max(tEnter, 0.0));
+}
+
+[numthreads(64,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    uint count, stride;
+    _Directions.GetDimensions(count, stride);
+    if (id.x >= count) return;
+
+    // Ray in world space
+    float3 worldDir = _Directions[id.x];
+    if (all(abs(worldDir) < 1e-6)) { _Intersections[id.x] = float4(0,0,0,0); return; } // Early return if bad input vector (0,0,0)ish
+    worldDir = normalize(worldDir);
+    
+    // Transform Ray to texture space
+    float3 texRayOrigin = mul(_WorldToSDFSpace, float4(0,0,0,1)).xyz;
+    float dist = SampleSDF(texRayOrigin);
+    float3 texRayDir = mul(_WorldToSDFSpace, float4(worldDir, 0.0)).xyz;
+    float3 newTexPoint = texRayOrigin + normalize(texRayDir) * dist;
+    float3 worldPos = mul(_SDFToWorldSpace, float4(newTexPoint, 1.0)).xyz;
+    _Intersections[id.x] = float4(worldPos, dist);
+    
+}

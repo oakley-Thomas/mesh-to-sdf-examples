@@ -1,0 +1,100 @@
+// LiDARRaymarch.compute
+#pragma kernel RaymarchSDF
+
+// SDF texture + sampler. Make sure the Texture3D is RFloat/RHalf, Clamp, Trilinear.
+Texture3D<float> _SDF;
+SamplerState sampler_SDF;             // Unity auto-binds 'sampler_<name>' if set from C#
+
+// Ray data
+RWStructuredBuffer<float4> _Rays;     // in: dir.xyz (world); in/out: hitPos.xyz, hitFlag.w
+
+// Uniforms
+uint _RayCount;
+float3 _RayOriginWS;
+
+float _MaxDistance;   // e.g., LiDAR range
+uint  _MaxSteps;      // e.g., 128
+float _HitEpsilon;    // e.g., 0.005 (in world units)
+float _Safety;        // e.g., 0.9 (scale step to avoid overshoot)
+float3 _SDFSize;      // (width,height,depth) of the 3D texture
+
+float4x4 _WorldToSDF; // SDFTexture.worldToSDFTexCoords
+
+// Optional: compute an approximate world-space voxel size to clamp minimum step.
+float EstimateVoxelWS(float3 pWS)
+{
+    // Convert a 1-texel offset along X in texture space into world space length.
+    // We use the inverse mapping approximated by sampling two nearby points.
+    // (Cheaper alternative: pass a constant estimated voxel size from C#.)
+    float3 uvw = mul(_WorldToSDF, float4(pWS,1)).xyz;
+    float3 du  = float3(1.0/_SDFSize.x, 0, 0);
+    float3 uvw2 = uvw + du;
+    // Move back to world space by inverting the affine map numerically:
+    // Solve world point by stepping along the ray in world until UVW increments by du.
+    // For performance, skip this exact inverse and just use a conservative clamp:
+    return 1e-3; // <- keep tiny; better: pass a precomputed voxel size from C#
+}
+
+[numthreads(64,1,1)]
+void RaymarchSDF(uint3 tid : SV_DispatchThreadID)
+{
+    if (tid.x >= _RayCount) return;
+
+    float4 r = _Rays[tid.x];
+    float3 dirWS = normalize(r.xyz);
+    float  t = 0.0;
+
+    // Early out if the direction is degenerate
+    if (all(dirWS == 0)) { r.w = 0; _Rays[tid.x] = r; return; }
+
+    bool hit = false;
+    float3 hitPos = 0;
+
+    // Sphere tracing
+    [loop]
+    for (uint step = 0; step < _MaxSteps && t < _MaxDistance; ++step)
+    {
+        float3 pWS = _RayOriginWS + dirWS * t;
+
+        // To texture coords
+        float3 uvw = mul(_WorldToSDF, float4(pWS, 1)).xyz;
+
+        // If you strictly want world-space bounds only inside the SDF volume:
+        if (any(uvw < 0.0) || any(uvw > 1.0))
+        {
+            // Outside the baked SDF box: no hit is possible if we started outside.
+            break;
+        }
+
+        // Sample SDF (signed distance in world units, see example shader usage)
+        float d = _SDF.SampleLevel(sampler_SDF, uvw, 0).r;
+
+        // Surface reached?
+        if (abs(d) <= _HitEpsilon)
+        {
+            hit = true;
+            hitPos = pWS;
+            break;
+        }
+
+        // Step forward (clamp to avoid tiny oscillations)
+        // If your field is unsigned, this still works from outside surfaces.
+        float minStep = 0.0; // optionally estimate voxel size here
+        float stepLen = max(d * _Safety, minStep);
+        // Guard against pathological zeros
+        if (stepLen <= 1e-6) stepLen = _HitEpsilon;
+        t += stepLen;
+    }
+
+    if (hit)
+    {
+        _Rays[tid.x] = float4(hitPos, 1.0);
+    }
+    else
+    {
+        // keep original direction, flag stays 0
+        r.w = 0.0;
+        _Rays[tid.x] = r;
+    }
+}
+
